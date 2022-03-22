@@ -6,7 +6,7 @@ Here we show how stochasticity can been added, and how to change the parameters 
 Two types of stochasticity have been added. Demographic stochasticity is the intrinsic uncertainty relating to survival and reproduction.
 This can either be added to all species or to none, and is applied directly to equations affecting biomass. 
 Environmental stochasticity is the random effects of the environment on a population, and can be applied to some species but not others. 
-In addition, environmental stochasticity has been 
+In addition, it is possible for the noise processes causing environmental stochasticity to covary with each other - though demographic noise processes always remain independent. 
 
 ## The modified BEFW equations
 
@@ -20,6 +20,8 @@ The equation to add environmental stochasticity to a parameter is an Ornstein-Uh
 
 Stochasticity has been implemented so that calling the `ModelParameters` function with default settings does not add any stochasticity. 
 This is because both the new stochastic model and the original deterministic model use the same `simulate` function to run simulations.
+
+Therefore, unless an `AddStochasticity` object is called and passed to `ModelParameters`, this entire module can be ignored and will not be used by `simulate`, and so will have no effect on the simulation of biomass dynamics. For example:
 
 ~~~julia> # Define a food web  
 julia> using EcologicalNetworks  
@@ -48,7 +50,7 @@ Adding stochasticity?: false
 
 ### AddStochasticity input
 
-The `AddStochasticity` object takes 8 arguments:
+If the intention is to add stochasticity to the BEFW, an `AddStochasticity` object needs to be created and passed to `ModelParameters`. The `AddStochasticity` function creates the object, and takes 8 arguments:
 
 * A `FoodWebs` object that describes the network stochasticity is being added to
 * A `BioRates` object that provides the mean values for the parameters envrionmental stochasticity is applied to
@@ -68,7 +70,7 @@ The *i<sup>th</sup>* value provided controls the standard deviation of the Wiene
 being applied to the *i<sup>th</sup>* environmentally stochastic species (see equation 2). There is no default.
 * `σd` can take a Float64 or vector of type Float64 and with length equal to the number of species in the food web. 
 The *i<sup>th</sup>* value provided controls the standard deviation of the Wiener process for demographic stochasticity
-being applied to the *i<sup>th</sup>* species (see equation 1). The default is 0.
+being applied to the *i<sup>th</sup>* species (see equation 1). The default is 0.0 (no demographic stochasticity).
 
 Note: There are certain combinations of arguments where the number of species having environmental stochasticity added to is unknown 
 or may vary between networks when performing multiple runs. 
@@ -136,6 +138,92 @@ and contains the standard deviations of the noise processes providing demographi
 * `stochproducers` - a vector hidden from the output display that indicates which producers in the interaction matrix have environmental stochasticity.
 * `stochconsumers` - a vector hidden from the output display that indicates which consumers in the interaction matrix have environmental stochasticity.
 
-## Modifications to the `simulate` function
+## Modifications to the simulate function
 
-The function `simulate` is still used to simulate biomass dynamics for the given timespan
+The function `simulate` is used to simulate biomass dynamics for the given timespan, whether stochasticity is being added or not. 
+This is controlled by the condition of the `addstochasticity` Boolean within the `AddStochasticity` object; if `addstochasticity = false`,
+then the `simulate` function will construct and solve an ODE problem in the usual way.
+However, if `addstochasticity = true`, then `simulate` will instead create and solve an SDE problem, adding stochasticity to the BEFW dynamics. 
+
+The noise process that is passed to the SDE problem is a correlated wiener process, as this gives environmental stochasticity the potential to covary.
+It was considered more intuitive for the user to provide a correlation matrix for the environmental stochasticity, which is converted to a covariance matrix.
+
+As such, addition arguments can be supplied that will only do something if stochasticity is being added. 
+
+* `extinction_threshold` - although this argument was already in the `simulate` function it was unused. Provide a Float64 (default is 1e-6) and any biomass value that goes below this threshold will at the next timestep be set to 0.0 
+* `corrmat` - a correlation matrix for adding covarying environmental noise processes. This matrix has to be square, positive definite, and have dimensions at least as big as the number of environmental noise processes. Because, for instance, adding environmental stochasticity to all producers may vary the size of matrix required, a provided correlation matrix that is too big will be trimmed to size - although there is no process for extrapolating a too-small matrix. The default is an identity matrix, providing no covariance. 
+
+## Adding stochasticity - an example
+
+In this example we will produce a network using the niche model and simulate it with no stochasticity and with adding stochasticity to 2 producers. We will plot the results side-by-side for a direct comparison.
+
+~~~
+julia> # Define a food web
+julia> using EcologicalNetworks, Plots
+julia> FW = FoodWeb(nichemodel, 10, C = 0.2, Z = 10)
+10 species - 27 links. 
+ Method: nichemodel
+julia> # Call the ModelParameters function with default settings
+julia> MP = ModelParameters(FW)
+Model parameters are compiled:
+FoodWeb - 🕸
+BioRates - 📈
+Environment - 🌄
+FunctionalResponse - 🍖
+AddStochasticity - 📣
+Stressor - 🤡
+julia> # Create a random vector of biomasses and simulate BEFW dynamics 
+julia> biomass = rand(richness(FW))
+10-element Vector{Float64}:
+ 0.5051702184341095
+ 0.573834363702471
+ 0.016871039022351986
+ 0.16338946608077587
+ 0.6153973996860426
+ 0.8765245999871492
+ 0.8763490269113854
+ 0.7066798642909136
+ 0.29262838821207426
+ 0.19325524384390635
+julia> run = simulate(MP, biomass)
+(ModelParameters = Model parameters are compiled:
+FoodWeb - 🕸
+BioRates - 📈
+Environment - 🌄
+FunctionalResponse - 🍖
+AddStochasticity - 📣
+Stressor - 🤡, t = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25  …  497.75, 498.0, 498.25, 498.5, 498.75, 499.0, 499.25, 499.5, 499.75, 500.0], B = [0.5051702184341095 0.573834363702471 … 0.29262838821207426 0.19325524384390635; 0.39413565298553255 0.5616828116223318 … 0.31436439894201024 0.20531711370446654; … ; 0.3140572069543845 0.1713219269672154 … 0.03333658147233786 0.26446754337095774; 0.3140877551644615 0.17132209074562957 … 0.03334085783888716 0.2644273461768384])
+julia> pl1 = plot(run.t, run.B, label = nothing, title = "No stochasticity")
+julia> # Create an AddStochasticity object
+julia> AS = AddStochasticity(FW, BioRates(FW), addstochasticity = true
+    , wherestochasticity = "producers", nstochasticity = 2
+    , θ = [0.8, 0.6], σe = [0.2,0.8])
+Adding stochasticity?: true
+θ (rate of return to mean): 0.8, ..., 0.6
+μ (mean of stochastic parameter): 1.0, ..., 1.0
+σe (environmental noise scaling parameter): 0.2, ..., 0.8
+σd (demographic noise scaling parameter): 0.0, ..., 0.0
+julia> # Call the ModelParameters function with this AddStochasticity object
+julia> MP2 = ModelParameters(FW, AS = AS)
+Model parameters are compiled:
+FoodWeb - 🕸
+BioRates - 📈
+Environment - 🌄
+FunctionalResponse - 🍖
+AddStochasticity - 📣
+Stressor - 🤡
+julia> # Simulate biomass dynamics using the original biomass vector and our new ModelParameters object
+julia> run2 = simulate(MP2, biomass)
+(ModelParameters = Model parameters are compiled:
+FoodWeb - 🕸
+BioRates - 📈
+Environment - 🌄
+FunctionalResponse - 🍖
+AddStochasticity - 📣
+Stressor - 🤡, t = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25  …  497.75, 498.0, 498.25, 498.5, 498.75, 499.0, 499.25, 499.5, 499.75, 500.0], B = [0.5051702184341095 0.573834363702471 … 1.0 1.0; 0.39388285104132414 0.5620444638933464 … 1.0916078163748413 1.1807362796318157; … ; 0.26246551379589067 0.16549059411113845 … 0.7782207837820889 0.08174114690148288; 0.2581128295741214 0.16094092835833065 … 0.7222850155815512 0.23204708286808665])
+julia> # Plot just the biomass dynamics
+julia> pl2 = plot(run2.t, run2.B[:,1:richness(FW)], label = nothing, title = "Added stochasticity")
+julia> # Plot the two side by side
+julia> plot(pl1, pl2, size = (1200, 400))
+~~~
+![image](https://user-images.githubusercontent.com/92929876/159461307-00180814-fbc2-4dcc-bdd3-083d232ffec2.png)
